@@ -1,6 +1,8 @@
+// HERE IN THIS PROJETC, WE ARE JUST TRYING TO SIMULATWE SOME NETWORK TRAFFIC 
 package main
 
 import (
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"sync/atomic"
@@ -28,4 +30,16 @@ func startServer() *httptest.Server {
 		time.Sleep(requestLatency)
 		fmt.Fprintln(w, "OK")
 	}))
+}
+
+func newClient() *http.Client {
+	return &http.Client{
+		Transport: &http.Transport{
+			MaxIdleConns:        100,
+			MaxIdleConnsPerHost: 10,
+			MaxConnsPerHost:     0,//no limits
+			IdleConnTimeout:     90 * time.Second,
+		},
+		Timeout: 5 * time.Second,
+	}
 }
