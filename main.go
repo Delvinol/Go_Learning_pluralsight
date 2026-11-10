@@ -1,8 +1,9 @@
-// HERE IN THIS PROJETC, WE ARE JUST TRYING TO SIMULATWE SOME NETWORK TRAFFIC 
+// HERE IN THIS PROJETC, WE ARE JUST TRYING TO SIMULATWE SOME NETWORK TRAFFIC / series of network calls
 package main
 
 import (
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"sync/atomic"
@@ -42,4 +43,25 @@ func newClient() *http.Client {
 		},
 		Timeout: 5 * time.Second,
 	}
+}
+
+
+func fetch(c *http.Client, url string) result {
+	defer progress.Add(1)
+
+	resp, err := c.Get(url)
+	if err != nil {
+		return result{err: err}
+	}
+	defer resp.Body.Close()
+	io.Copy(io.Discard, resp.Body)
+	return result{status: resp.StatusCode}
+}
+
+func fetchAll(c *http.Client, urls []string) []result {
+	out := make([]result, len(urls))
+	for i, u := range urls {
+		out[i] = fetch(c, u)
+	}
+	return out
 }
