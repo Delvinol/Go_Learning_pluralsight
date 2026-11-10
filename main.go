@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"runtime"
 	"sync/atomic"
 	"time"
 )
@@ -64,4 +65,29 @@ func fetchAll(c *http.Client, urls []string) []result {
 		out[i] = fetch(c, u)
 	}
 	return out
+}
+
+//monitor samples the live goroutine count into peak on a fixed ticker, and --
+// only when every > 0 -- prints a progress line every "every".
+func monitor(stop <-chan struct{}, label string, every time.Duration, peak *atomic.Int64) {
+	t := time.NewTicker(20 * time.Millisecond)
+	defer t.Stop()
+	next := time.Now().Add(every)
+	for {
+		select {
+			case <-stop:
+				return
+			case now := <-t.C:
+				if n := int64(runtime.NumGoroutine()); n > peak.Load() {
+					peak.Store(n)
+				}
+				if every > 0 && now.After(next) {
+					fmt.Printf(" %-10s %-11s goroutines: %d\n",
+					 label, 
+					 fmt.Sprintf("%d/%d", progress.Load(), requestCount),
+					 runtime.NumGoroutine())
+					next = now.Add(every)
+				}
+		}
+	}
 }
