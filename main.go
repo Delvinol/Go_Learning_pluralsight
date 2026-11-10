@@ -91,3 +91,45 @@ func monitor(stop <-chan struct{}, label string, every time.Duration, peak *atom
 		}
 	}
 }
+
+func okCount(rs []result) int {
+	n := 0
+	for _, r := range rs {
+		if r.err == nil && r.status == http.StatusOK {
+			n++
+		}
+	}
+	return n
+}
+
+func printPhase(label string, rs []result, elapsed time.Duration, peak int64) {
+	fmt.Printf("%-13s %d/%d ok in %-14s peak goroutines: %d\n",
+		label, okCount(rs), requestCount, elapsed.Round(time.Millisecond), peak)
+}
+
+func main() {
+	srv := startServer()
+	client := newClient()
+
+	urls := make([]string, requestCount)
+	for i := range urls {
+		urls[i] = srv.URL
+	}
+
+	fmt.Printf("Server: %s | requests: %d | latency per request: %s\n\n",
+		srv.URL, requestCount, requestLatency)
+
+	progress.Store(0)
+	var seqPeak atomic.Int64
+	stopSeq := make(chan struct{})
+	go monitor(stopSeq, "sequential", 1*time.Second, &seqPeak)
+
+	seqStart := time.Now()
+	seq := fetchAll(client, urls)
+	seqElapsed := time.Since(seqStart)
+	close(stopSeq)
+
+	printPhase("sequential", seq, seqElapsed, seqPeak.Load())
+
+	srv.Close()
+}
