@@ -7,22 +7,23 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"runtime"
+	"sync"
 	"sync/atomic"
 	"time"
 )
 
 const (
-	requestCount = 50
+	requestCount   = 50
 	requestLatency = 200 * time.Millisecond
 )
 
 type result struct {
 	status int
-	err error
+	err    error
 }
 
-//Progress counts completed fetches and drives the on-screen progress line.
-//main resets it at the start of each phase
+// Progress counts completed fetches and drives the on-screen progress line.
+// main resets it at the start of each phase
 var progress atomic.Int64
 
 // startServer runs a real net/http server inside this process. Its handler
@@ -39,13 +40,12 @@ func newClient() *http.Client {
 		Transport: &http.Transport{
 			MaxIdleConns:        100,
 			MaxIdleConnsPerHost: 10,
-			MaxConnsPerHost:     0,//no limits
+			MaxConnsPerHost:     0, //no limits
 			IdleConnTimeout:     90 * time.Second,
 		},
 		Timeout: 5 * time.Second,
 	}
 }
-
 
 func fetch(c *http.Client, url string) result {
 	defer progress.Add(1)
@@ -67,7 +67,24 @@ func fetchAll(c *http.Client, urls []string) []result {
 	return out
 }
 
-//monitor samples the live goroutine count into peak on a fixed ticker, and --
+func fetchAllConcurrent(c *http.Client, urls []string) []result {
+	out := make([]result, len(urls))
+	var wg sync.WaitGroup
+
+	for i, u := range urls {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			out[i] = fetch(c, u)
+
+		}()
+	}
+
+	wg.Wait()
+	return out
+}
+
+// monitor samples the live goroutine count into peak on a fixed ticker, and --
 // only when every > 0 -- prints a progress line every "every".
 func monitor(stop <-chan struct{}, label string, every time.Duration, peak *atomic.Int64) {
 	t := time.NewTicker(20 * time.Millisecond)
@@ -75,19 +92,19 @@ func monitor(stop <-chan struct{}, label string, every time.Duration, peak *atom
 	next := time.Now().Add(every)
 	for {
 		select {
-			case <-stop:
-				return
-			case now := <-t.C:
-				if n := int64(runtime.NumGoroutine()); n > peak.Load() {
-					peak.Store(n)
-				}
-				if every > 0 && now.After(next) {
-					fmt.Printf(" %-10s %-11s goroutines: %d\n",
-					 label, 
-					 fmt.Sprintf("%d/%d", progress.Load(), requestCount),
-					 runtime.NumGoroutine())
-					next = now.Add(every)
-				}
+		case <-stop:
+			return
+		case now := <-t.C:
+			if n := int64(runtime.NumGoroutine()); n > peak.Load() {
+				peak.Store(n)
+			}
+			if every > 0 && now.After(next) {
+				fmt.Printf(" %-10s %-11s goroutines: %d\n",
+					label,
+					fmt.Sprintf("%d/%d", progress.Load(), requestCount),
+					runtime.NumGoroutine())
+				next = now.Add(every)
+			}
 		}
 	}
 }
@@ -130,6 +147,19 @@ func main() {
 	close(stopSeq)
 
 	printPhase("sequential", seq, seqElapsed, seqPeak.Load())
+
+	progress.Store(0)
+	var concPeak atomic.Int64
+	stopConc := make(chan struct{})
+	go monitor(stopConc, "concurrent", 1*time.Second, &concPeak)
+
+	concStart := time.Now()
+	conc := fetchAllConcurrent(client, urls)
+	concElapsed := time.Since(concStart)
+	close(stopConc)
+	printPhase("concurrent", conc, concElapsed, concPeak.Load())
+
+	fmt.Printf("%-13s %.1fx\n", "speedup", float64(seqElapsed)/float64(concElapsed))
 
 	srv.Close()
 }
